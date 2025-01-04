@@ -21,8 +21,7 @@ export function ChatForm({
     if (!input.trim() || isLoading) return
 
     const userMessage = { role: 'user', content: input.trim() }
-    const newMessages = [...messages, userMessage]
-    setMessages(newMessages)
+    setMessages(prev => [...prev, userMessage])
     setInput('')
     setIsLoading(true)
 
@@ -31,29 +30,35 @@ export function ChatForm({
       const vectorResponse = await fetch('http://localhost:8000/api/v1/vector/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          query: input.trim(),
-          top_k: 3  // Adjust as needed
-        }),
-      })
+        body: JSON.stringify({ query: input.trim(), top_k: 3 }),
+      });
 
-      if (!vectorResponse.ok) throw new Error('Vector search failed')
-      
-      const vectorResults = await vectorResponse.json()
-      const context = vectorResults.matches
-        .map((match: { metadata: { description: string } }) => match.metadata.description)
-        .join('\n')
+      if (!vectorResponse.ok) throw new Error('Vector search failed');
+
+      const vectorResults = await vectorResponse.json();
+      console.log('Vector search raw results:', vectorResults);
+
+      const documents = vectorResults.matches.map((match: any, index: number) => ({
+        id: String(index + 1), // Generate IDs as sequential numbers starting from 1
+        data: `${match.metadata.company} - ${match.metadata.title}: ${match.metadata.description}`,
+      }));
+
+      console.log('Transformed documents:', documents);
 
       // Then, send chat request with context
       const response = await fetch('http://localhost:8000/api/v1/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          messages: newMessages,
+        body: JSON.stringify({
+          messages: [...messages, userMessage].map(msg => ({
+            role: msg.role,
+            content: msg.content,
+          })),
           stream: true,
-          context: context  // Add context from vector search
+          context: documents,
+
         }),
-      })
+      });
 
       if (!response.ok) throw new Error('Network error')
 
@@ -75,22 +80,18 @@ export function ChatForm({
             const data = line.slice(6)
             if (data === '[DONE]') continue
 
-            try {
-              const parsed = JSON.parse(data)
-              if (parsed.response) {
-                partialResponse += parsed.response
-                setMessages(prev => {
-                  const updated = [...prev]
-                  return !assistantMessageAdded
-                    ? [...updated, { role: 'assistant', content: partialResponse }]
-                    : [
-                        ...updated.slice(0, -1),
-                        { role: 'assistant', content: partialResponse },
-                      ]
-                })
-                assistantMessageAdded = true
+            // Simply append the data directly since it's already the text content
+            partialResponse += data
+            setMessages(prev => {
+              if (!assistantMessageAdded) {
+                return [...prev, { role: 'assistant', content: partialResponse }]
               }
-            } catch {}
+              return [
+                ...prev.slice(0, -1),
+                { role: 'assistant', content: partialResponse }
+              ]
+            })
+            assistantMessageAdded = true
           }
         }
       }
@@ -145,12 +146,12 @@ export function ChatForm({
       )}
       {...props}
     >
-      <div className="flex-1 content-center overflow-y-auto px-6">
+      <div className="flex-1 content-center overflow-y-auto px-6 mb-12">
         {messages.length ? messageList : header}
       </div>
       <form
         onSubmit={handleSubmit}
-        className="border-input bg-background focus-within:ring-ring/10 relative mx-6 mb-6 flex items-center rounded-[16px] border px-3 py-1.5 pr-8 text-sm focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-0"
+        className="border-input bg-background focus-within:ring-ring/10 fixed bottom-8 left-0 right-0 mx-20 flex items-center rounded-[16px] border px-3 py-1.5 pr-8 text-sm focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-0"
       >
         <AutoResizeTextarea
           onKeyDown={handleKeyDown}

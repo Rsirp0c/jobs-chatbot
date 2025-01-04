@@ -12,8 +12,9 @@ async def search_vectors(query: VectorQuery):
         query_embedding = cohere_client.embed(
             texts=[query.query],
             model="embed-english-v3.0",
-            input_type="search_query"
-        ).embeddings[0]
+            input_type="search_query",
+            embedding_types=['float']
+        ).embeddings.float[0]
         
         # Search Pinecone
         search_response = pinecone_index.query(
