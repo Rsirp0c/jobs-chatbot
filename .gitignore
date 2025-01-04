@@ -2,3 +2,75 @@ venv
 .env
 node_modules
 .DS_Store
+
+# General
+.DS_Store
+Thumbs.db
+*.log
+logs/
+.env
+.env.*
+
+# Python (FastAPI backend)
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.sqlite3
+*.db
+instance/
+.venv/
+env/
+venv/
+pip-log.txt
+pytest_cache/
+*.pytest_cache/
+.coverage
+htmlcov/
+
+# Python-specific IDE and tool files
+*.vscode/
+.mypy_cache/
+.pytest_cache/
+.pycache/
+ipynb_checkpoints/
+*.pkl
+*.egg-info/
+
+# Node.js (Next.js frontend)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Next.js build output
+.next/
+out/
+
+# Static file caches
+.cache/
+.next/cache/
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+
+# Testing
+coverage/
+*.coverage
+test_output/
+junit-reports/
+*.snap
+
+# Miscellaneous
+*.bak
+*.tmp
+*.temp
+*.orig
+*.rej
+*.svg~
+*.backup
