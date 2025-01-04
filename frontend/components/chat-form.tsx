@@ -7,12 +7,19 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { AutoResizeTextarea } from '@/components/autoresize-textarea'
 import { useState } from 'react'
 import { toast } from '@/components/ui/use-toast'
+import { Message } from '@/components/message'
 
-export function ChatForm({
-  className,
-  ...props
-}: React.ComponentProps<'form'>) {
-  const [messages, setMessages] = useState<{ role: string; content: string }[]>([])
+interface ChatFormProps extends React.ComponentProps<'form'> {
+  className?: string;
+}
+
+export function ChatForm({ className, ...props }: ChatFormProps) {
+  const [messages, setMessages] = useState<{ role: string; content: string; matches?: any[] }[]>([
+    { 
+      role: 'system', 
+      content: "You're an assistant for finding the best match job. Briefly introduce the jobs."
+    }
+  ])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
 
@@ -31,19 +38,15 @@ export function ChatForm({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: input.trim(), top_k: 3 }),
-      });
+      })
 
-      if (!vectorResponse.ok) throw new Error('Vector search failed');
+      if (!vectorResponse.ok) throw new Error('Vector search failed')
 
-      const vectorResults = await vectorResponse.json();
-      console.log('Vector search raw results:', vectorResults);
-
+      const vectorResults = await vectorResponse.json()
       const documents = vectorResults.matches.map((match: any, index: number) => ({
-        id: String(index + 1), // Generate IDs as sequential numbers starting from 1
+        id: String(index + 1),
         data: `${match.metadata.company} - ${match.metadata.title}: ${match.metadata.description}`,
-      }));
-
-      console.log('Transformed documents:', documents);
+      }))
 
       // Then, send chat request with context
       const response = await fetch('http://localhost:8000/api/v1/chat/stream', {
@@ -56,9 +59,8 @@ export function ChatForm({
           })),
           stream: true,
           context: documents,
-
         }),
-      });
+      })
 
       if (!response.ok) throw new Error('Network error')
 
@@ -80,22 +82,29 @@ export function ChatForm({
             const data = line.slice(6)
             if (data === '[DONE]') continue
 
-            // Simply append the data directly since it's already the text content
             partialResponse += data
             setMessages(prev => {
               if (!assistantMessageAdded) {
-                return [...prev, { role: 'assistant', content: partialResponse }]
+                return [...prev, { 
+                  role: 'assistant', 
+                  content: partialResponse,
+                  matches: vectorResults.matches 
+                }]
               }
               return [
                 ...prev.slice(0, -1),
-                { role: 'assistant', content: partialResponse }
+                { 
+                  role: 'assistant', 
+                  content: partialResponse,
+                  matches: vectorResults.matches 
+                }
               ]
             })
             assistantMessageAdded = true
           }
         }
       }
-    } catch {
+    } catch (error) {
       toast({
         title: 'Error',
         description: 'Failed to send message. Please try again.',
@@ -114,44 +123,49 @@ export function ChatForm({
   }
 
   const header = (
-    <header className="m-auto flex max-w-96 flex-col gap-5 text-center">
-      <h1 className="text-2xl font-semibold leading-none tracking-tight">
-        AI Chatbot with Vector Search
+    <header className="m-auto flex max-w-full flex-col gap-3 sm:gap-4 md:gap-5 px-4 sm:px-6 text-left">
+      <h1 className="text-4xl sm:text-5xl md:text-6xl font-semibold leading-tight sm:leading-tight md:leading-none tracking-tight">
+        AI Answer Engine for{" "}
+        <span className="block text-blue-400 text-right">
+          <em>Job Matching</em>
+        </span>
       </h1>
-      <p className="text-muted-foreground text-sm">
+      <p className="text-muted-foreground text-sm sm:text-base md:text-md">
         This chatbot uses FastAPI backend with Cohere for chat and vector search capabilities.
       </p>
     </header>
   )
 
   const messageList = (
-    <div className="my-4 flex h-fit min-h-full flex-col gap-4">
-      {messages.map((message, index) => (
-        <div
-          key={index}
-          data-role={message.role}
-          className="max-w-[80%] rounded-xl px-3 py-2 text-sm data-[role=assistant]:self-start data-[role=user]:self-end data-[role=assistant]:bg-gray-100 data-[role=user]:bg-blue-500 data-[role=assistant]:text-black data-[role=user]:text-white"
-        >
-          {message.content}
-        </div>
-      ))}
+    <div className="my-6 flex h-fit min-h-full flex-col gap-4">
+      {messages
+        .filter(message => message.role !== 'system')
+        .map((message, index) => (
+          <Message 
+            key={index} 
+            role={message.role as "system" | "user" | "assistant"} 
+            content={message.content}
+            matches={message.matches}
+          />
+        ))}
     </div>
   )
 
   return (
     <main
       className={cn(
-        'ring-none my-4 mx-auto flex h-svh max-h-svh w-full max-w-[60rem] flex-col items-stretch border-none',
+        'ring-none mx-auto flex h-svh max-h-svh w-full max-w-3xl flex-col items-stretch border-none',
         className
       )}
       {...props}
     >
-      <div className="flex-1 content-center overflow-y-auto px-6 mb-12">
-        {messages.length ? messageList : header}
+      <div className="flex-1 content-center overflow-y-auto px-6">
+        {messages.length > 1 ? messageList : header}
       </div>
-      <form
-        onSubmit={handleSubmit}
-        className="border-input bg-background focus-within:ring-ring/10 fixed bottom-8 left-0 right-0 mx-20 flex items-center rounded-[16px] border px-3 py-1.5 pr-8 text-sm focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-0"
+      <div className=" min-h-14 bg-white z-50">
+        <form
+          onSubmit={handleSubmit}
+        className="min-h-8 border-input bg-background focus-within:ring-ring/10 fixed bottom-6 max-w-3xl w-[calc(100%-2rem)] mx-auto left-0 right-0 flex items-center rounded-[16px] border px-3 py-2 pr-8 text-md focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-0"
       >
         <AutoResizeTextarea
           onKeyDown={handleKeyDown}
@@ -168,14 +182,15 @@ export function ChatForm({
               disabled={isLoading}
               variant="ghost"
               size="sm"
-              className="absolute bottom-1 right-1 size-6 rounded-full"
+              className="absolute bottom-2 right-1 size-6 rounded-full"
             >
               <ArrowUpIcon size={16} />
             </Button>
           </TooltipTrigger>
-          <TooltipContent sideOffset={12}>Submit</TooltipContent>
-        </Tooltip>
-      </form>
+            <TooltipContent sideOffset={12}>Submit</TooltipContent>
+          </Tooltip>
+        </form>
+      </div>
     </main>
   )
 }
