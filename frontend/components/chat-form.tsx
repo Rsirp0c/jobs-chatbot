@@ -15,7 +15,7 @@ const suggestionPrompts = [
   "I'm looking for software engineering jobs in the Bay Area",
   "Show me remote frontend jobs",
   "Find AI/ML jobs in Google",
-  "Find entry-level positions using Python in New York",
+  "Find entry-level positions using Python or Java",
 
 ]
 
@@ -203,12 +203,12 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
     <header className="m-auto flex max-w-3xl flex-col gap-3 sm:gap-4 md:gap-5 px-4 sm:px-6 text-left">
       <h1 className="text-4xl sm:text-5xl md:text-6xl font-semibold leading-tight sm:leading-tight md:leading-none tracking-tight">
         AI Answer Engine for{" "}
-        <span className="block text-blue-400 text-right">
+        <span className="block text-blue-400 text-right mt-1">
           <em>Job Matching</em>
         </span>
       </h1>
       <p className="text-muted-foreground text-sm sm:text-base md:text-md">
-        This chatbot uses FastAPI backend with Cohere for chat and vector search capabilities.
+        This chatbot uses Cohere and Pinecone for chat and vector search capabilities.
       </p>
       <div className="mt-6 flex flex-wrap gap-3">
         {suggestionPrompts.map((prompt, index) => (
