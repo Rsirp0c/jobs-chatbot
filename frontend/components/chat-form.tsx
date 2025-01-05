@@ -98,7 +98,7 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
     setTimeout(() => scrollToBottom(), 0)
 
     try {
-      const vectorResponse = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}//api/v1/vector/search`, {
+      const vectorResponse = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/vector/search`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: messageContent.trim(), top_k: 3 }),
@@ -112,7 +112,7 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
         data: `${match.metadata.company} - ${match.metadata.title}: ${match.metadata.description}`,
       }))
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}//api/v1/chat/stream`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
