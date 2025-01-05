@@ -1,13 +1,15 @@
 'use client'
 
 import { cn } from '@/lib/utils'
-import { ArrowUpIcon } from 'lucide-react'
+import { ArrowUpIcon, ArrowDownIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { AutoResizeTextarea } from '@/components/autoresize-textarea'
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { toast } from '@/components/ui/use-toast'
 import { Message } from '@/components/message'
+import { Spinner } from '@/components/ui/spinner'
+import { JobMatches } from '@/components/jobmatches'
 
 interface ChatFormProps extends React.ComponentProps<'form'> {
   className?: string;
@@ -22,6 +24,33 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
   ])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const [showScrollButton, setShowScrollButton] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }
+
+  const handleScroll = () => {
+    if (!containerRef.current) return
+    
+    const { scrollTop, scrollHeight, clientHeight } = containerRef.current
+    const isNearBottom = scrollHeight - scrollTop - clientHeight < 100
+    setShowScrollButton(!isNearBottom)
+  }
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (container) {
+      container.addEventListener('scroll', handleScroll)
+      return () => container.removeEventListener('scroll', handleScroll)
+    }
+  }, [])
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages])
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -137,58 +166,86 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
   )
 
   const messageList = (
-    <div className="my-6 flex h-fit min-h-full flex-col gap-4">
+    <div className="flex h-fit min-h-full flex-col gap-4">
       {messages
         .filter(message => message.role !== 'system')
         .map((message, index) => (
-          <Message 
-            key={index} 
-            role={message.role as "system" | "user" | "assistant"} 
-            content={message.content}
-            matches={message.matches}
-          />
+          <>
+            <Message 
+              key={`message-${index}`}
+              role={message.role as "system" | "user" | "assistant"} 
+              content={message.content}
+            />
+            {message.role === 'assistant' && message.matches && (
+              <JobMatches 
+                key={`matches-${index}`}
+                matches={message.matches}
+              />
+            )}
+          </>
         ))}
+      {isLoading && (
+        <div className="self-start rounded-xl bg-white px-3 py-2">
+          <Spinner className="text-blue-500" />
+        </div>
+      )}
+      <div ref={messagesEndRef} />
     </div>
   )
 
   return (
     <main
       className={cn(
-        'ring-none mx-auto flex h-svh max-h-svh w-full max-w-3xl flex-col items-stretch border-none',
+        'ring-none mx-auto flex h-svh max-h-svh w-full max-w-4xl flex-col items-stretch border-none relative',
         className
       )}
       {...props}
     >
-      <div className="flex-1 content-center overflow-y-auto px-6">
+      <div 
+        ref={containerRef}
+        className="flex-1 content-center overflow-y-auto px-6 pt-4 mb-2" 
+      >
         {messages.length > 1 ? messageList : header}
       </div>
-      <div className=" min-h-14 bg-white z-50">
+
+      {showScrollButton && (
+        <Button
+          onClick={scrollToBottom}
+          variant="outline"
+          size="icon"
+          className="absolute bottom-20 left-1/2 -translate-x-1/2 rounded-full shadow-md hover:shadow-lg"
+        >
+          <ArrowDownIcon size={16} />
+        </Button>
+      )}
+
+      <div className="min-h-14 bg-white z-50">
         <form
-          onSubmit={handleSubmit}
-        className="min-h-8 border-input bg-background focus-within:ring-ring/10 fixed bottom-6 max-w-3xl w-[calc(100%-2rem)] mx-auto left-0 right-0 flex items-center rounded-[16px] border px-3 py-2 pr-8 text-md focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-0"
-      >
-        <AutoResizeTextarea
-          onKeyDown={handleKeyDown}
-          onChange={e => setInput(e.target.value)}
-          value={input}
-          placeholder="Enter a message"
-          disabled={isLoading}
-          className="placeholder:text-muted-foreground flex-1 bg-transparent focus:outline-none"
-        />
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="submit"
-              disabled={isLoading}
-              variant="ghost"
-              size="sm"
-              className="absolute bottom-2 right-1 size-6 rounded-full"
-            >
-              <ArrowUpIcon size={16} />
-            </Button>
-          </TooltipTrigger>
-            <TooltipContent sideOffset={12}>Submit</TooltipContent>
-          </Tooltip>
+            onSubmit={handleSubmit}
+          className="min-h-8 border-input bg-background focus-within:ring-ring/10 fixed bottom-6 max-w-3xl w-[calc(100%-2rem)] mx-auto left-0 right-0 flex items-center rounded-[16px] border px-3 py-2 pr-8 text-md focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-0"
+        >
+          <AutoResizeTextarea
+            onKeyDown={handleKeyDown}
+            onChange={e => setInput(e.target.value)}
+            value={input}
+            placeholder="Enter a message"
+            disabled={isLoading}
+            className="placeholder:text-muted-foreground flex-1 bg-transparent focus:outline-none"
+          />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="submit"
+                disabled={isLoading}
+                variant="ghost"
+                size="sm"
+                className="absolute bottom-2 right-1 size-6 rounded-full"
+              >
+                <ArrowUpIcon size={16} />
+              </Button>
+            </TooltipTrigger>
+              <TooltipContent sideOffset={12}>Submit</TooltipContent>
+            </Tooltip>
         </form>
       </div>
     </main>
