@@ -9,7 +9,7 @@ import json
 router = APIRouter()
 
 async def generate_stream(messages: List[Message], context: List[str]):
-    print("messages :", messages)  # Debugging, can be removed
+    # print("messages :", messages)  # Debugging, can be removed
     try:
         documents = [{"id": str(idx + 1), "data": doc} for idx, doc in enumerate(context)] if context else []
         
@@ -25,11 +25,28 @@ async def generate_stream(messages: List[Message], context: List[str]):
             if event:
                 if event.type == "content-delta":
                     yield f"data: {event.delta.message.content.text}\n\n"
-        
+
+                elif event.type == "citation-start":
+                    # Convert citations to a serializable format
+                    print("citation-start: ",event.delta.message.citations)
+                    citations = [
+                        {
+                            "start": event.delta.message.citations.start,
+                            "end": event.delta.message.citations.end,
+                            "text": event.delta.message.citations.text,
+                            "document_id": event.delta.message.citations.sources[0].id,
+                        }
+                    ]
+                    citation_data = {
+                        "type": event.type,
+                        "citations": citations
+                    }
+                    yield f"data: {json.dumps(citation_data)}\n\n"
+
             elif event.event_type == "stream-end":
                 yield f"data: .\n\n"
                 yield f"data: [DONE]\n\n"
-        
+
     except Exception as e:
         yield f"data: {json.dumps({'error': str(e)})}\n\n"
         yield f"data: [DONE]\n\n"

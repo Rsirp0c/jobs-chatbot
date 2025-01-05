@@ -11,15 +11,42 @@ import { Message } from '@/components/message'
 import { Spinner } from '@/components/ui/spinner'
 import { JobMatches } from '@/components/jobmatches'
 
+const suggestionPrompts = [
+  "I'm looking for software engineering jobs in the Bay Area",
+  "Show me remote frontend jobs",
+  "Find AI/ML jobs in Google",
+  "Find entry-level positions using Python in New York",
+
+]
+
 interface ChatFormProps extends React.ComponentProps<'form'> {
   className?: string;
 }
 
+interface MessageWithCitations {
+  role: string
+  content: string
+  matches?: any[]
+  citations?: {
+    start: number
+    end: number
+    text: string
+    document_id: string
+  }[]
+}
+
+interface Citation {
+  start: number
+  end: number
+  text: string
+  document_id: string
+}
+
 export function ChatForm({ className, ...props }: ChatFormProps) {
-  const [messages, setMessages] = useState<{ role: string; content: string; matches?: any[] }[]>([
+  const [messages, setMessages] = useState<MessageWithCitations[]>([
     { 
       role: 'system', 
-      content: "You're an assistant for finding the best match job. Briefly introduce the jobs."
+      content: "You're an assistant for finding the best match job. Briefly introduce the jobs. do not output markdown."
     }
   ])
   const [input, setInput] = useState('')
@@ -49,24 +76,32 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
   }, [])
 
   useEffect(() => {
-    scrollToBottom()
+    // Only auto-scroll if we're already near the bottom
+    if (containerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = containerRef.current
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 100
+      
+      if (isNearBottom) {
+        scrollToBottom()
+      }
+    }
   }, [messages])
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    if (!input.trim() || isLoading) return
+  const sendMessage = async (messageContent: string) => {
+    if (!messageContent.trim() || isLoading) return
 
-    const userMessage = { role: 'user', content: input.trim() }
+    const userMessage = { role: 'user', content: messageContent.trim() }
     setMessages(prev => [...prev, userMessage])
     setInput('')
     setIsLoading(true)
+    // Force scroll to bottom when user sends a message
+    setTimeout(() => scrollToBottom(), 0)
 
     try {
-      // First, perform vector search
       const vectorResponse = await fetch('http://localhost:8000/api/v1/vector/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: input.trim(), top_k: 3 }),
+        body: JSON.stringify({ query: messageContent.trim(), top_k: 3 }),
       })
 
       if (!vectorResponse.ok) throw new Error('Vector search failed')
@@ -77,7 +112,6 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
         data: `${match.metadata.company} - ${match.metadata.title}: ${match.metadata.description}`,
       }))
 
-      // Then, send chat request with context
       const response = await fetch('http://localhost:8000/api/v1/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -98,6 +132,7 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
 
       let partialResponse = ''
       let assistantMessageAdded = false
+      let citations: Citation[] = []
 
       while (true) {
         const { done, value } = await reader.read()
@@ -107,30 +142,38 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
         const lines = chunk.split('\n')
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6)
-            if (data === '[DONE]') continue
+          if (!line.startsWith('data: ')) continue
+          
+          const data = line.slice(6)
+          if (data === '[DONE]') continue
+          if (data === '.') continue
 
+          try {
+            const jsonData = JSON.parse(data)
+            
+            if (jsonData.type === 'citation-start') {
+              citations = [...citations, ...jsonData.citations]
+            } else {
+              partialResponse += jsonData
+            }
+          } catch (error) {
             partialResponse += data
-            setMessages(prev => {
-              if (!assistantMessageAdded) {
-                return [...prev, { 
-                  role: 'assistant', 
-                  content: partialResponse,
-                  matches: vectorResults.matches 
-                }]
-              }
-              return [
-                ...prev.slice(0, -1),
-                { 
-                  role: 'assistant', 
-                  content: partialResponse,
-                  matches: vectorResults.matches 
-                }
-              ]
-            })
-            assistantMessageAdded = true
           }
+
+          setMessages(prev => {
+            const newMessage = {
+              role: 'assistant',
+              content: partialResponse,
+              matches: vectorResults.matches,
+              citations: citations
+            }
+            
+            if (!assistantMessageAdded) {
+              return [...prev, newMessage]
+            }
+            return [...prev.slice(0, -1), newMessage]
+          })
+          assistantMessageAdded = true
         }
       }
     } catch (error) {
@@ -144,6 +187,11 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
     }
   }
 
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    await sendMessage(input)
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -152,7 +200,7 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
   }
 
   const header = (
-    <header className="m-auto flex max-w-full flex-col gap-3 sm:gap-4 md:gap-5 px-4 sm:px-6 text-left">
+    <header className="m-auto flex max-w-3xl flex-col gap-3 sm:gap-4 md:gap-5 px-4 sm:px-6 text-left">
       <h1 className="text-4xl sm:text-5xl md:text-6xl font-semibold leading-tight sm:leading-tight md:leading-none tracking-tight">
         AI Answer Engine for{" "}
         <span className="block text-blue-400 text-right">
@@ -162,6 +210,18 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
       <p className="text-muted-foreground text-sm sm:text-base md:text-md">
         This chatbot uses FastAPI backend with Cohere for chat and vector search capabilities.
       </p>
+      <div className="mt-6 flex flex-wrap gap-3">
+        {suggestionPrompts.map((prompt, index) => (
+          <Button
+            key={index}
+            variant="outline"
+            className="text-sm"
+            onClick={() => sendMessage(prompt)}
+          >
+            {prompt}
+          </Button>
+        ))}
+      </div>
     </header>
   )
 
@@ -175,6 +235,8 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
               key={`message-${index}`}
               role={message.role as "system" | "user" | "assistant"} 
               content={message.content}
+              citations={message.citations}
+              matches={message.matches}
             />
             {message.role === 'assistant' && message.matches && (
               <JobMatches 
@@ -196,7 +258,7 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
   return (
     <main
       className={cn(
-        'ring-none mx-auto flex h-svh max-h-svh w-full max-w-4xl flex-col items-stretch border-none relative',
+        'ring-none mx-auto flex h-svh max-h-svh w-full max-w-6xl flex-col items-stretch border-none relative',
         className
       )}
       {...props}
@@ -221,7 +283,7 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
 
       <div className="min-h-14 bg-white z-50">
         <form
-            onSubmit={handleSubmit}
+          onSubmit={handleSubmit}
           className="min-h-8 border-input bg-background focus-within:ring-ring/10 fixed bottom-6 max-w-3xl w-[calc(100%-2rem)] mx-auto left-0 right-0 flex items-center rounded-[16px] border px-3 py-2 pr-8 text-md focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-0"
         >
           <AutoResizeTextarea
@@ -244,8 +306,8 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
                 <ArrowUpIcon size={16} />
               </Button>
             </TooltipTrigger>
-              <TooltipContent sideOffset={12}>Submit</TooltipContent>
-            </Tooltip>
+            <TooltipContent sideOffset={12}>Submit</TooltipContent>
+          </Tooltip>
         </form>
       </div>
     </main>
