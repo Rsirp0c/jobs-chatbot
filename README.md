@@ -4,13 +4,13 @@
 
 Welcome to the **Jobs Chatbot** project! This application is designed to assist users in finding job opportunities through an interactive chatbot interface. Built using **Next.js** for the frontend and **FastAPI** for the backend, this project leverages modern web technologies to provide a seamless user experience.
 
-## Basic Architecture
-
-The architecture of the Jobs Chatbot is divided into two main components: the **Frontend** and the **Backend**. 
-
 ## Open Source used
 
 My project used a open source [web scrapper specify for job search](https://github.com/Bunsly/JobSpy).
+
+## Basic Architecture
+
+The architecture of the Jobs Chatbot is divided into two main components: the **Frontend** and the **Backend**. 
 
 ### Frontend
 
