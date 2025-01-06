@@ -12,11 +12,10 @@ import { Spinner } from '@/components/ui/spinner'
 import { JobMatches } from '@/components/jobmatches'
 
 const suggestionPrompts = [
+  'What can you do?',
   "I'm looking for software engineering jobs in the Bay Area",
-  "Show me remote frontend jobs",
   "Find AI/ML jobs in Google",
-  "Find entry-level positions using Python or Java",
-
+  "Find senior level positions using Python or Java",
 ]
 
 interface ChatFormProps extends React.ComponentProps<'form'> {
@@ -42,13 +41,19 @@ interface Citation {
   document_id: string
 }
 
+interface QueryAnalysisResponse {
+  needs_vector_search: boolean
+  reasoning: string
+  modified_query: string
+}
+
 export function ChatForm({ className, ...props }: ChatFormProps) {
   const [messages, setMessages] = useState<MessageWithCitations[]>([
     { 
       role: 'system', 
-      content: "You're an assistant for finding the best match job. Briefly introduce the jobs. do not output markdown."
+      content: "You are a job-matching assistant. Your purpose is to help users find jobs that match their skills and preferences. Provide brief introductions to job opportunities. If asked what you can do, respond concisely and stay focused on job-matching assistance."
     }
-  ])
+  ]);
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -76,7 +81,6 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
   }, [])
 
   useEffect(() => {
-    // Only auto-scroll if we're already near the bottom
     if (containerRef.current) {
       const { scrollTop, scrollHeight, clientHeight } = containerRef.current
       const isNearBottom = scrollHeight - scrollTop - clientHeight < 100
@@ -87,6 +91,29 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
     }
   }, [messages])
 
+  const analyzeQuery = async (query: string): Promise<QueryAnalysisResponse> => {
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/agent/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Query analysis failed')
+      }
+
+      return await response.json()
+    } catch (error) {
+      console.error('Error analyzing query:', error)
+      return {
+        needs_vector_search: true,
+        reasoning: 'Analysis failed, defaulting to vector search',
+        modified_query: query
+      }
+    }
+  }
+
   const sendMessage = async (messageContent: string) => {
     if (!messageContent.trim() || isLoading) return
 
@@ -94,34 +121,53 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
     setMessages(prev => [...prev, userMessage])
     setInput('')
     setIsLoading(true)
-    // Force scroll to bottom when user sends a message
     setTimeout(() => scrollToBottom(), 0)
 
     try {
-      const vectorResponse = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}//api/v1/vector/search`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: messageContent.trim(), top_k: 3 }),
-      })
+      // First, analyze the query
+      const queryAnalysis = await analyzeQuery(messageContent.trim())
+      
+      let vectorResults = { matches: [] }
+      
+      // Only perform vector search if needed
+      if (queryAnalysis.needs_vector_search) {
+        const vectorResponse = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/vector/search`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            query: queryAnalysis.modified_query, 
+            top_k: 3 
+          }),
+        })
 
-      if (!vectorResponse.ok) throw new Error('Vector search failed')
+        if (!vectorResponse.ok) throw new Error('Vector search failed')
+        vectorResults = await vectorResponse.json()
+      }
 
-      const vectorResults = await vectorResponse.json()
       const documents = vectorResults.matches.map((match: any, index: number) => ({
         id: String(index + 1),
         data: `${match.metadata.company} - ${match.metadata.title}: ${match.metadata.description}`,
       }))
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}//api/v1/chat/stream`, {
+      // Add analysis reasoning to system message for context
+      const systemMessage = {
+        role: 'system',
+        content: queryAnalysis.needs_vector_search
+          ? `Using job search capabilities. ${queryAnalysis.reasoning}`
+          : `Providing general career advice. ${queryAnalysis.reasoning}`
+      }
+
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [...messages, userMessage].map(msg => ({
-            role: msg.role,
-            content: msg.content,
-          })),
+          messages: [systemMessage, ...messages.filter(msg => msg.role !== 'system'), userMessage]
+            .map(msg => ({
+              role: msg.role,
+              content: msg.content,
+            })),
           stream: true,
-          context: documents,
+          context: queryAnalysis.needs_vector_search ? documents : [],
         }),
       })
 
@@ -164,7 +210,7 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
             const newMessage = {
               role: 'assistant',
               content: partialResponse,
-              matches: vectorResults.matches,
+              matches: queryAnalysis.needs_vector_search ? vectorResults.matches : undefined,
               citations: citations
             }
             
@@ -215,7 +261,7 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
           <Button
             key={index}
             variant="outline"
-            className="text-sm"
+            className="text-md"
             onClick={() => sendMessage(prompt)}
           >
             {prompt}
