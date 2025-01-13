@@ -11,6 +11,7 @@ My project used a open source [web scrapper specify for job search](https://gith
 ## Basic Architecture
 
 The architecture of the Jobs Chatbot is divided into two main components: the **Frontend** and the **Backend**. 
+![architecture](architecture.png)
 
 ### Frontend
 
