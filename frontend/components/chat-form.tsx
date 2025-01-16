@@ -116,47 +116,44 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
 
   const sendMessage = async (messageContent: string) => {
     if (!messageContent.trim() || isLoading) return
-
+  
     const userMessage = { role: 'user', content: messageContent.trim() }
     setMessages(prev => [...prev, userMessage])
     setInput('')
     setIsLoading(true)
     setTimeout(() => scrollToBottom(), 0)
-
+  
     try {
-      // First, analyze the query
-      const queryAnalysis = await analyzeQuery(messageContent.trim())
-      
-      let vectorResults = { matches: [] }
-      
-      // Only perform vector search if needed
-      if (queryAnalysis.needs_vector_search) {
-        const vectorResponse = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/vector/search`, {
+      // Run query analysis and potential vector search in parallel
+      const [queryAnalysis, vectorResults] = await Promise.all([
+        analyzeQuery(messageContent.trim()),
+        // Pre-fetch vector results - we'll only use them if needed
+        fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/vector/search`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
-            query: queryAnalysis.modified_query, 
+            query: messageContent.trim(), 
             top_k: 3 
           }),
-        })
-
-        if (!vectorResponse.ok) throw new Error('Vector search failed')
-        vectorResults = await vectorResponse.json()
-      }
-
-      const documents = vectorResults.matches.map((match: any, index: number) => ({
-        id: String(index + 1),
-        data: `${match.metadata.company} - ${match.metadata.title}: ${match.metadata.description}`,
-      }))
-
-      // Add analysis reasoning to system message for context
+        }).then(res => res.json()).catch(() => ({ matches: [] }))
+      ])
+  
+      // Prepare documents only if vector search was needed
+      const documents = queryAnalysis.needs_vector_search 
+        ? vectorResults.matches.map((match: any, index: number) => ({
+            id: String(index + 1),
+            data: `${match.metadata.company} - ${match.metadata.title}: ${match.metadata.description}`,
+          }))
+        : []
+  
       const systemMessage = {
         role: 'system',
         content: queryAnalysis.needs_vector_search
           ? `Using job search capabilities. ${queryAnalysis.reasoning}`
           : `Providing general career advice. ${queryAnalysis.reasoning}`
       }
-
+  
+      // Stream the chat response
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -167,33 +164,33 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
               content: msg.content,
             })),
           stream: true,
-          context: queryAnalysis.needs_vector_search ? documents : [],
+          context: documents,
         }),
       })
-
+  
       if (!response.ok) throw new Error('Network error')
-
+  
       const reader = response.body?.getReader()
       if (!reader) throw new Error('No reader available')
-
+  
       let partialResponse = ''
       let assistantMessageAdded = false
       let citations: Citation[] = []
-
+  
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-
+  
         const chunk = new TextDecoder().decode(value)
         const lines = chunk.split('\n')
-
+  
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue
           
           const data = line.slice(6)
           if (data === '[DONE]') continue
           if (data === '.') continue
-
+  
           try {
             const jsonData = JSON.parse(data)
             
@@ -205,7 +202,7 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
           } catch (error) {
             partialResponse += data
           }
-
+  
           setMessages(prev => {
             const newMessage = {
               role: 'assistant',
