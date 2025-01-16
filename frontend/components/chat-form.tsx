@@ -34,17 +34,13 @@ interface MessageWithCitations {
   }[]
 }
 
-interface Citation {
-  start: number
-  end: number
-  text: string
-  document_id: string
-}
-
-interface QueryAnalysisResponse {
-  needs_vector_search: boolean
-  reasoning: string
-  modified_query: string
+interface CombinedAnalysisResponse {
+  analysis: {
+    needs_vector_search: boolean
+    reasoning: string
+    modified_query: string
+  }
+  vector_results: any[]
 }
 
 export function ChatForm({ className, ...props }: ChatFormProps) {
@@ -53,7 +49,8 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
       role: 'system', 
       content: "You are a job-matching assistant. Your purpose is to help users find jobs that match their skills and preferences. Provide brief introductions to job opportunities. If asked what you can do, respond concisely and stay focused on job-matching assistance."
     }
-  ]);
+  ])
+  
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -91,68 +88,44 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
     }
   }, [messages])
 
-  const analyzeQuery = async (query: string): Promise<QueryAnalysisResponse> => {
-    try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/agent/analyze`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query }),
-      })
-
-      if (!response.ok) {
-        throw new Error('Query analysis failed')
-      }
-
-      return await response.json()
-    } catch (error) {
-      console.error('Error analyzing query:', error)
-      return {
-        needs_vector_search: true,
-        reasoning: 'Analysis failed, defaulting to vector search',
-        modified_query: query
-      }
-    }
-  }
-
   const sendMessage = async (messageContent: string) => {
     if (!messageContent.trim() || isLoading) return
-  
+
     const userMessage = { role: 'user', content: messageContent.trim() }
     setMessages(prev => [...prev, userMessage])
     setInput('')
     setIsLoading(true)
     setTimeout(() => scrollToBottom(), 0)
-  
+
     try {
-      // Run query analysis and potential vector search in parallel
-      const [queryAnalysis, vectorResults] = await Promise.all([
-        analyzeQuery(messageContent.trim()),
-        // Pre-fetch vector results - we'll only use them if needed
-        fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/vector/search`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            query: messageContent.trim(), 
-            top_k: 3 
-          }),
-        }).then(res => res.json()).catch(() => ({ matches: [] }))
-      ])
-  
-      // Prepare documents only if vector search was needed
-      const documents = queryAnalysis.needs_vector_search 
-        ? vectorResults.matches.map((match: any, index: number) => ({
+      // Use the combined analysis endpoint
+      const analysisResponse = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/agent/analyze_and_search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: messageContent.trim() }),
+      })
+
+      if (!analysisResponse.ok) throw new Error('Analysis failed')
+      
+      const combinedResults: CombinedAnalysisResponse = await analysisResponse.json()
+      const { analysis, vector_results } = combinedResults
+
+      // Prepare documents if vector search was used
+      const documents = analysis.needs_vector_search 
+        ? vector_results.map((match, index) => ({
             id: String(index + 1),
             data: `${match.metadata.company} - ${match.metadata.title}: ${match.metadata.description}`,
           }))
         : []
-  
+
+      // Add analysis reasoning to system message for context
       const systemMessage = {
         role: 'system',
-        content: queryAnalysis.needs_vector_search
-          ? `Using job search capabilities. ${queryAnalysis.reasoning}`
-          : `Providing general career advice. ${queryAnalysis.reasoning}`
+        content: analysis.needs_vector_search
+          ? `Using job search capabilities. ${analysis.reasoning}`
+          : `Providing general career advice. ${analysis.reasoning}`
       }
-  
+
       // Stream the chat response
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/chat/stream`, {
         method: 'POST',
@@ -167,30 +140,35 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
           context: documents,
         }),
       })
-  
-      if (!response.ok) throw new Error('Network error')
-  
+
+      if (!response.ok) throw new Error('Chat stream failed')
+
       const reader = response.body?.getReader()
       if (!reader) throw new Error('No reader available')
-  
+
       let partialResponse = ''
       let assistantMessageAdded = false
-      let citations: Citation[] = []
-  
+      let citations: Array<{
+        start: number
+        end: number
+        text: string
+        document_id: string
+      }> = []
+
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-  
+
         const chunk = new TextDecoder().decode(value)
         const lines = chunk.split('\n')
-  
+
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue
           
           const data = line.slice(6)
           if (data === '[DONE]') continue
           if (data === '.') continue
-  
+
           try {
             const jsonData = JSON.parse(data)
             
@@ -202,12 +180,12 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
           } catch (error) {
             partialResponse += data
           }
-  
+
           setMessages(prev => {
             const newMessage = {
               role: 'assistant',
               content: partialResponse,
-              matches: queryAnalysis.needs_vector_search ? vectorResults.matches : undefined,
+              matches: analysis.needs_vector_search ? vector_results : undefined,
               citations: citations
             }
             
@@ -253,7 +231,7 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
       <p className="text-muted-foreground text-sm sm:text-base md:text-md">
         This chatbot uses Cohere and Pinecone for chat and vector search capabilities.
       </p>
-      <div className="mt-6 flex flex-wrap gap-3">
+      <div className="mt-6 flex flex-wrap gap-3 max-w-3xl">
         {suggestionPrompts.map((prompt, index) => (
           <Button
             key={index}
