@@ -76,9 +76,7 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
     } catch (error) {
       console.error('Error analyzing query:', error)
       return {
-        needs_vector_search: true,
-        reasoning: 'Analysis failed, defaulting to vector search',
-        modified_query: query
+        needs_vector_search: false
       }
     }
   }
@@ -149,10 +147,8 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
     setTimeout(() => scrollToBottom(), 0)
   
     try {
-      // Run query analysis and potential vector search in parallel
       const queryAnalysis = await analyzeQuery(messageContent.trim());
 
-      // Step 2: Only proceed with vector search if needed
       let vectorResults = { matches: [] };
       if (queryAnalysis.needs_vector_search) {
         vectorResults = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/vector/search`, {
@@ -166,7 +162,7 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
           .then((res) => res.json())
           .catch((error) => {
             console.error('Fetch error:', error);
-            return { matches: [] }; // Handle errors gracefully
+            return { matches: [] };
           });
       }
   
@@ -177,18 +173,12 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
           }))
         : []
   
-      const systemMessage = {
-        role: 'system',
-        content: queryAnalysis.needs_vector_search
-          ? `Using job search capabilities. ${queryAnalysis.reasoning}`
-          : `Providing general career advice. ${queryAnalysis.reasoning}`
-      }
   
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [systemMessage, ...messages.filter(msg => msg.role !== 'system'), userMessage]
+          messages: [...messages.filter(msg => msg.role !== 'system'), userMessage]
             .map(msg => ({
               role: msg.role,
               content: msg.content,

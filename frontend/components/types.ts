@@ -16,8 +16,6 @@ export interface MessageWithCitations {
   
   export interface QueryAnalysisResponse {
     needs_vector_search: boolean
-    reasoning: string
-    modified_query: string
   }
   
   export interface JobMatch {
