@@ -147,24 +147,36 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
     setTimeout(() => scrollToBottom(), 0)
   
     try {
-      const queryAnalysis = await analyzeQuery(messageContent.trim());
-
-      let vectorResults = { matches: [] };
-      if (queryAnalysis.needs_vector_search) {
-        vectorResults = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/vector/search`, {
+      // Run query analysis and potential vector search in parallel
+      const abortController = new AbortController()
+      
+      const [queryAnalysis, vectorResults] = await Promise.all([
+        analyzeQuery(messageContent.trim()),
+        fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/vector/search`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            query: messageContent.trim(),
-            top_k: 3,
+          body: JSON.stringify({ 
+            query: messageContent.trim(), 
+            top_k: 3 
           }),
+          signal: abortController.signal
         })
-          .then((res) => res.json())
+          .then(res => res.json())
           .catch((error) => {
-            console.error('Fetch error:', error);
-            return { matches: [] };
-          });
-      }
+            // If aborted, return empty matches
+            if (error.name === 'AbortError') {
+              return { matches: [] }
+            }
+            // For other errors, also return empty matches
+            return { matches: [] }
+          })
+      ]).then(([queryAnalysis, vectorResults]) => {
+        // If vector search is not needed, abort the request
+        if (!queryAnalysis.needs_vector_search) {
+          abortController.abort()
+        }
+        return [queryAnalysis, vectorResults]
+      })
   
       const documents = queryAnalysis.needs_vector_search 
         ? vectorResults.matches.map((match: any, index: number) => ({
