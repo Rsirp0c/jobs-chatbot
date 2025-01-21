@@ -156,25 +156,16 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
-            query: messageContent.trim(), 
-            top_k: 3 
-          }),
-          signal: abortController.signal
+        query: messageContent.trim(), 
+        top_k: 3 
+          })
         })
           .then(res => res.json())
-          .catch((error) => {
-            // If aborted, return empty matches
-            if (error.name === 'AbortError') {
-              return { matches: [] }
-            }
-            // For other errors, also return empty matches
-            return { matches: [] }
+          .catch(() => {
+        // For errors, return empty matches
+        return { matches: [] }
           })
       ]).then(([queryAnalysis, vectorResults]) => {
-        // If vector search is not needed, abort the request
-        if (!queryAnalysis.needs_vector_search) {
-          abortController.abort()
-        }
         return [queryAnalysis, vectorResults]
       })
   
