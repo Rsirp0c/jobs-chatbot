@@ -1,56 +1,28 @@
 'use client'
 
 import { cn } from '@/lib/utils'
-import { ArrowUpIcon, ArrowDownIcon } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { AutoResizeTextarea } from '@/components/autoresize-textarea'
 import { useState, useEffect, useRef } from 'react'
 import { toast } from '@/components/ui/use-toast'
-import { Message } from '@/components/message'
-import { Spinner } from '@/components/ui/spinner'
-import { JobMatches } from '@/components/jobmatches'
+import { ChatHeader } from './chat-header'
+import { ChatMessages } from './chat-messages'
+import { ChatInput } from './chat-input'
+import { ScrollButton } from './scroll-button'
+import { MessageWithCitations, ChatFormProps, QueryAnalysisResponse } from './types'
 
-const suggestionPrompts = [
+const SYSTEM_MESSAGE = {
+  role: 'system',
+  content: "You are a job-matching assistant. Your purpose is to help users find jobs that match their skills and preferences. Provide brief introductions to job opportunities. If asked what you can do, respond concisely and stay focused on job-matching assistance."
+}
+
+const SUGGESTION_PROMPTS = [
   'What can you do?',
   "I'm looking for software engineering jobs in the Bay Area",
   "Find AI/ML jobs in Google",
   "Find senior level positions using Python or Java",
 ]
 
-interface ChatFormProps extends React.ComponentProps<'form'> {
-  className?: string;
-}
-
-interface MessageWithCitations {
-  role: string
-  content: string
-  matches?: any[]
-  citations?: {
-    start: number
-    end: number
-    text: string
-    document_id: string
-  }[]
-}
-
-interface CombinedAnalysisResponse {
-  analysis: {
-    needs_vector_search: boolean
-    reasoning: string
-    modified_query: string
-  }
-  vector_results: any[]
-}
-
 export function ChatForm({ className, ...props }: ChatFormProps) {
-  const [messages, setMessages] = useState<MessageWithCitations[]>([
-    { 
-      role: 'system', 
-      content: "You are a job-matching assistant. Your purpose is to help users find jobs that match their skills and preferences. Provide brief introductions to job opportunities. If asked what you can do, respond concisely and stay focused on job-matching assistance."
-    }
-  ])
-  
+  const [messages, setMessages] = useState<MessageWithCitations[]>([SYSTEM_MESSAGE])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -88,45 +60,122 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
     }
   }, [messages])
 
+  const analyzeQuery = async (query: string): Promise<QueryAnalysisResponse> => {
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/agent/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Query analysis failed')
+      }
+
+      return await response.json()
+    } catch (error) {
+      console.error('Error analyzing query:', error)
+      return {
+        needs_vector_search: true,
+        reasoning: 'Analysis failed, defaulting to vector search',
+        modified_query: query
+      }
+    }
+  }
+
+  const processStreamChunk = (
+    chunk: string,
+    partialResponse: string,
+    citations: any[],
+    assistantMessageAdded: boolean,
+    setMessages: React.Dispatch<React.SetStateAction<MessageWithCitations[]>>,
+    queryAnalysis: QueryAnalysisResponse,
+    vectorResults: any
+  ) => {
+    const lines = chunk.split('\n')
+    let updatedPartialResponse = partialResponse
+    let updatedCitations = citations
+    let updatedMessageAdded = assistantMessageAdded
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue
+      
+      const data = line.slice(6)
+      if (data === '[DONE]' || data === '.') continue
+
+      try {
+        const jsonData = JSON.parse(data)
+        
+        if (jsonData.type === 'citation-start') {
+          updatedCitations = [...updatedCitations, ...jsonData.citations]
+        } else {
+          updatedPartialResponse += jsonData
+        }
+      } catch (error) {
+        updatedPartialResponse += data
+      }
+
+      setMessages(prev => {
+        const newMessage = {
+          role: 'assistant',
+          content: updatedPartialResponse,
+          matches: queryAnalysis.needs_vector_search ? vectorResults.matches : undefined,
+          citations: updatedCitations
+        }
+        
+        if (!updatedMessageAdded) {
+          return [...prev, newMessage]
+        }
+        return [...prev.slice(0, -1), newMessage]
+      })
+      updatedMessageAdded = true
+    }
+
+    return {
+      partialResponse: updatedPartialResponse,
+      citations: updatedCitations,
+      assistantMessageAdded: updatedMessageAdded
+    }
+  }
+
   const sendMessage = async (messageContent: string) => {
     if (!messageContent.trim() || isLoading) return
-
+  
     const userMessage = { role: 'user', content: messageContent.trim() }
     setMessages(prev => [...prev, userMessage])
     setInput('')
     setIsLoading(true)
+    scrollToBottom
     setTimeout(() => scrollToBottom(), 0)
-
+  
     try {
-      // Use the combined analysis endpoint
-      const analysisResponse = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/agent/analyze_and_search`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: messageContent.trim() }),
-      })
-
-      if (!analysisResponse.ok) throw new Error('Analysis failed')
-      
-      const combinedResults: CombinedAnalysisResponse = await analysisResponse.json()
-      const { analysis, vector_results } = combinedResults
-
-      // Prepare documents if vector search was used
-      const documents = analysis.needs_vector_search 
-        ? vector_results.map((match, index) => ({
+      // Run query analysis and potential vector search in parallel
+      const [queryAnalysis, vectorResults] = await Promise.all([
+        analyzeQuery(messageContent.trim()),
+        fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/vector/search`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            query: messageContent.trim(), 
+            top_k: 3 
+          }),
+        }).then(res => res.json()).catch(() => ({ matches: [] }))
+      ])
+  
+      const documents = queryAnalysis.needs_vector_search 
+        ? vectorResults.matches.map((match: any, index: number) => ({
             id: String(index + 1),
             data: `${match.metadata.company} - ${match.metadata.title}: ${match.metadata.description}`,
           }))
         : []
-
-      // Add analysis reasoning to system message for context
+  
       const systemMessage = {
         role: 'system',
-        content: analysis.needs_vector_search
-          ? `Using job search capabilities. ${analysis.reasoning}`
-          : `Providing general career advice. ${analysis.reasoning}`
+        content: queryAnalysis.needs_vector_search
+          ? `Using job search capabilities. ${queryAnalysis.reasoning}`
+          : `Providing general career advice. ${queryAnalysis.reasoning}`
       }
-
-      // Stream the chat response
+  
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -140,62 +189,34 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
           context: documents,
         }),
       })
-
-      if (!response.ok) throw new Error('Chat stream failed')
-
+  
+      if (!response.ok) throw new Error('Network error')
+  
       const reader = response.body?.getReader()
       if (!reader) throw new Error('No reader available')
-
+  
       let partialResponse = ''
       let assistantMessageAdded = false
-      let citations: Array<{
-        start: number
-        end: number
-        text: string
-        document_id: string
-      }> = []
-
+      let citations: any[] = []
+  
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-
+  
         const chunk = new TextDecoder().decode(value)
-        const lines = chunk.split('\n')
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          
-          const data = line.slice(6)
-          if (data === '[DONE]') continue
-          if (data === '.') continue
-
-          try {
-            const jsonData = JSON.parse(data)
-            
-            if (jsonData.type === 'citation-start') {
-              citations = [...citations, ...jsonData.citations]
-            } else {
-              partialResponse += jsonData
-            }
-          } catch (error) {
-            partialResponse += data
-          }
-
-          setMessages(prev => {
-            const newMessage = {
-              role: 'assistant',
-              content: partialResponse,
-              matches: analysis.needs_vector_search ? vector_results : undefined,
-              citations: citations
-            }
-            
-            if (!assistantMessageAdded) {
-              return [...prev, newMessage]
-            }
-            return [...prev.slice(0, -1), newMessage]
-          })
-          assistantMessageAdded = true
-        }
+        const result = processStreamChunk(
+          chunk,
+          partialResponse,
+          citations,
+          assistantMessageAdded,
+          setMessages,
+          queryAnalysis,
+          vectorResults
+        )
+        
+        partialResponse = result.partialResponse
+        citations = result.citations
+        assistantMessageAdded = result.assistantMessageAdded
       }
     } catch (error) {
       toast({
@@ -220,117 +241,44 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
     }
   }
 
-  const header = (
-    <header className="m-auto flex max-w-3xl flex-col gap-3 sm:gap-4 md:gap-5 px-4 sm:px-6 text-left">
-      <h1 className="text-4xl sm:text-5xl md:text-6xl font-semibold leading-tight sm:leading-tight md:leading-none tracking-tight">
-        AI Answer Engine for{" "}
-        <span className="block text-blue-400 text-right mt-1">
-          <em>Job Matching</em>
-        </span>
-      </h1>
-      <p className="text-muted-foreground text-sm sm:text-base md:text-md">
-        This chatbot uses Cohere and Pinecone for chat and vector search capabilities.
-      </p>
-      <div className="mt-6 flex flex-wrap gap-3 max-w-3xl">
-        {suggestionPrompts.map((prompt, index) => (
-          <Button
-            key={index}
-            variant="outline"
-            className="text-md"
-            onClick={() => sendMessage(prompt)}
-          >
-            {prompt}
-          </Button>
-        ))}
-      </div>
-    </header>
-  )
-
-  const messageList = (
-    <div className="flex h-fit min-h-full flex-col gap-4">
-      {messages
-        .filter(message => message.role !== 'system')
-        .map((message, index) => (
-          <>
-            <Message 
-              key={`message-${index}`}
-              role={message.role as "system" | "user" | "assistant"} 
-              content={message.content}
-              citations={message.citations}
-              matches={message.matches}
-            />
-            {message.role === 'assistant' && message.matches && (
-              <JobMatches 
-                key={`matches-${index}`}
-                matches={message.matches}
-              />
-            )}
-          </>
-        ))}
-      {isLoading && (
-        <div className="self-start rounded-xl bg-white px-3 py-2">
-          <Spinner className="text-blue-500" />
-        </div>
-      )}
-      <div ref={messagesEndRef} />
-    </div>
-  )
-
   return (
     <main
       className={cn(
-        'ring-none mx-auto flex h-svh max-h-svh w-full max-w-6xl flex-col items-stretch border-none relative',
+        'ring-none flex h-screen w-full flex-col items-stretch border-none relative',
         className
       )}
       {...props}
     >
       <div 
         ref={containerRef}
-        className="flex-1 content-center overflow-y-auto px-6 pt-4 mb-2" 
+        className="flex-1 content-center overflow-y-auto" 
       >
-        {messages.length > 1 ? messageList : header}
-      </div>
-
-      {showScrollButton && (
-        <Button
-          onClick={scrollToBottom}
-          variant="outline"
-          size="icon"
-          className="absolute bottom-20 left-1/2 -translate-x-1/2 rounded-full shadow-md hover:shadow-lg"
-        >
-          <ArrowDownIcon size={16} />
-        </Button>
-      )}
-
-      <div className="min-h-14 bg-white z-50">
-        <form
-          onSubmit={handleSubmit}
-          className="min-h-8 border-input bg-background focus-within:ring-ring/10 fixed bottom-6 max-w-3xl w-[calc(100%-2rem)] mx-auto left-0 right-0 flex items-center rounded-[16px] border px-3 py-2 pr-8 text-md focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-0"
-        >
-          <AutoResizeTextarea
-            onKeyDown={handleKeyDown}
-            onChange={e => setInput(e.target.value)}
-            value={input}
-            placeholder="Enter a message"
-            disabled={isLoading}
-            className="placeholder:text-muted-foreground flex-1 bg-transparent focus:outline-none"
+        {messages.length > 1 ? (
+          <ChatMessages 
+            messages={messages}
+            isLoading={isLoading}
+            messagesEndRef={messagesEndRef}
           />
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="submit"
-                disabled={isLoading}
-                variant="ghost"
-                size="sm"
-                className="absolute bottom-2 right-1 size-6 rounded-full"
-              >
-                <ArrowUpIcon size={16} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent sideOffset={12}>Submit</TooltipContent>
-          </Tooltip>
-        </form>
+        ) : (
+          <ChatHeader 
+            suggestionPrompts={SUGGESTION_PROMPTS}
+            onSuggestionClick={sendMessage}
+          />
+        )}
       </div>
+
+      <ScrollButton 
+        show={showScrollButton}
+        onClick={scrollToBottom}
+      />
+
+      <ChatInput
+        input={input}
+        isLoading={isLoading}
+        onInputChange={setInput}
+        onSubmit={handleSubmit}
+        onKeyDown={handleKeyDown}
+      />
     </main>
   )
 }
