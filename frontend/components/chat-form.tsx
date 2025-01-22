@@ -147,9 +147,6 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
     setTimeout(() => scrollToBottom(), 0)
   
     try {
-      // Run query analysis and potential vector search in parallel
-      const abortController = new AbortController()
-      
       const [queryAnalysis, vectorResults] = await Promise.all([
         analyzeQuery(messageContent.trim()),
         fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/vector/search`, {
@@ -162,7 +159,6 @@ export function ChatForm({ className, ...props }: ChatFormProps) {
         })
           .then(res => res.json())
           .catch(() => {
-        // For errors, return empty matches
         return { matches: [] }
           })
       ]).then(([queryAnalysis, vectorResults]) => {
